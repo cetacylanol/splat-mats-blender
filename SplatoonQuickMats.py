@@ -15,82 +15,87 @@ def set_mat(mat, texs, pres, blue_fix = False, use_ao = True):
     link = mat.node_tree.links.new
 
     pr_node = t_nodes.get('Principled BSDF')
-    pr_node.inputs[7].default_value = 0.5
-    mat.use_backface_culling = True
-    mat.blend_method = 'OPAQUE'
 
-    check_nodes(tree=mat.node_tree)
+    if(pr_node is not None):
+        pr_node.inputs[7].default_value = 0.5
+        pr_node.inputs[6].default_value = 0
+        mat.use_backface_culling = True
+        mat.blend_method = 'OPAQUE'
 
-    #add textures to node tree and connect
-    if(texs[0] != '0'):
-        if(not pres[0]):
-            alb_nd = add_img_node(t_nodes, texs[0], location=(-550,750))
+        check_nodes(tree=mat.node_tree)
 
-            if(texs[1] != '0' and use_ao):
-                #connect ao
-                #some of the backgrounds use a separate UV map for ao... so this doesnt add that. I might add it later
-                ao_nd = add_img_node(t_nodes, texs[1], location=(-550,500))
-                mix_ao_nd = t_nodes.new('ShaderNodeMix')
-                mix_ao_nd.location = (-450, 260)
-                mix_ao_nd.data_type = 'RGBA'
-                mix_ao_nd.blend_type = 'MULTIPLY'
-                mix_ao_nd.inputs[0].default_value = 1
+        #add textures to node tree and connect
+        if(texs[0] != '0'):
+            if(not pres[0]):
+                alb_nd = add_img_node(t_nodes, texs[0], location=(-550,750))
 
-                link(alb_nd.outputs[0], mix_ao_nd.inputs[6])
-                link(ao_nd.outputs[0], mix_ao_nd.inputs[7])
-                link(mix_ao_nd.outputs[2], pr_node.inputs[0])
+                if(texs[1] != '0' and use_ao):
+                    #connect ao
+                    #some of the backgrounds use a separate UV map for ao... so this doesnt add that. I might add it later
+                    ao_nd = add_img_node(t_nodes, texs[1], location=(-550,500))
+                    mix_ao_nd = t_nodes.new('ShaderNodeMix')
+                    mix_ao_nd.location = (-450, 260)
+                    mix_ao_nd.data_type = 'RGBA'
+                    mix_ao_nd.blend_type = 'MULTIPLY'
+                    mix_ao_nd.inputs[0].default_value = 1
+
+                    link(alb_nd.outputs[0], mix_ao_nd.inputs[6])
+                    link(ao_nd.outputs[0], mix_ao_nd.inputs[7])
+                    link(mix_ao_nd.outputs[2], pr_node.inputs[0])
+                else:
+                    link(alb_nd.outputs[0], pr_node.inputs[0])
+
+
+        if(texs[2] != '0'):
+            if(not pres[1]):
+                #set metal
+                mtl_nd = add_img_node(t_nodes, texs[2], location=(-300,250), cspace='Non-Color')
+                link(mtl_nd.outputs[0], pr_node.inputs[6])
+        if(texs[3] != '0'):
+            if(not pres[2]):
+                #set roughness
+                rgh_nd = add_img_node(t_nodes, texs[3], location=(-300,0), cspace='Non-Color')
+                link(rgh_nd.outputs[0], pr_node.inputs[9])
+        if(texs[4] != '0' or texs[7] != '0'):
+            if(not pres[3]):
+                #set emission
+                if(texs[4] == '0'):
+                    emi_nd = add_img_node(t_nodes, texs[7], location=(-300,-250))
+                else:
+                    emi_nd = add_img_node(t_nodes, texs[4], location=(-300,-250))
+                
+                link(emi_nd.outputs[0], pr_node.inputs[19])
+        if(texs[5] != '0'):
+            #set opacity
+            if(not pres[4]):
+                opa_nd = add_img_node(t_nodes, texs[5], location=(-300,-500), cspace='Non-Color')
+                link(opa_nd.outputs[0], pr_node.inputs[21])
+                mat.blend_method = 'CLIP'
+        if(texs[6] != '0'):
+            #set normal
+            if(pres[5]):
+                pr_node.inputs[22].links[0].from_node.inputs[0].default_value = 1
             else:
-                link(alb_nd.outputs[0], pr_node.inputs[0])
+                nrm_nd = add_img_node(t_nodes, texs[6], location=(-500,-750), cspace='Non-Color')
+                nrm_map = t_nodes.new('ShaderNodeNormalMap')
+                nrm_map.location = (-250, -750)
 
+                if(blue_fix):
+                    #add 1 to blue channel
+                    sep_col = t_nodes.new('ShaderNodeSeparateColor')
+                    sep_col.location = (-300,-800)
+                    comb_col = t_nodes.new('ShaderNodeCombineColor')
+                    comb_col.location = (-250,-800)
+                    comb_col.inputs[2].default_value = 1
 
-    if(texs[2] != '0'):
-        if(not pres[1]):
-            #set metal
-            mtl_nd = add_img_node(t_nodes, texs[2], location=(-300,250), cspace='Non-Color')
-            link(mtl_nd.outputs[0], pr_node.inputs[6])
-    if(texs[3] != '0'):
-        if(not pres[2]):
-            #set roughness
-            rgh_nd = add_img_node(t_nodes, texs[3], location=(-300,0), cspace='Non-Color')
-            link(rgh_nd.outputs[0], pr_node.inputs[9])
-    if(texs[4] != '0' or texs[7] != '0'):
-        if(not pres[3]):
-            #set emi
-            if(texs[4] == '0'):
-                emi_nd = add_img_node(t_nodes, texs[7], location=(-300,-250))
-            else:
-                emi_nd = add_img_node(t_nodes, texs[4], location=(-300,-250))
-            
-            link(emi_nd.outputs[0], pr_node.inputs[19])
-    if(texs[5] != '0'):
-        if(not pres[4]):
-            opa_nd = add_img_node(t_nodes, texs[5], location=(-300,-500), cspace='Non-Color')
-            link(opa_nd.outputs[0], pr_node.inputs[21])
-            mat.blend_method = 'CLIP'
-    if(texs[6] != '0'):
-        if(pres[5]):
-            pr_node.inputs[22].links[0].from_node.inputs[0].default_value = 1
-        else:
-            nrm_nd = add_img_node(t_nodes, texs[6], location=(-500,-750), cspace='Non-Color')
-            nrm_map = t_nodes.new('ShaderNodeNormalMap')
-            nrm_map.location = (-250, -750)
+                    link(nrm_nd.outputs[0], sep_col.inputs[0])
+                    link(sep_col.outputs[0], comb_col.inputs[0])
+                    link(sep_col.outputs[1], comb_col.inputs[1])
+                    link(comb_col.outputs[0], nrm_map.inputs[1])
+                else:
+                    link(nrm_nd.outputs[0], nrm_map.inputs[1])
 
-            if(blue_fix):
-                #add 1 to blue channel
-                sep_col = t_nodes.new('ShaderNodeSeparateColor')
-                sep_col.location = (-300,-800)
-                comb_col = t_nodes.new('ShaderNodeCombineColor')
-                comb_col.location = (-250,-800)
-                comb_col.inputs[2].default_value = 1
-
-                link(nrm_nd.outputs[0], sep_col.inputs[0])
-                link(sep_col.outputs[0], comb_col.inputs[0])
-                link(sep_col.outputs[1], comb_col.inputs[1])
-                link(comb_col.outputs[0], nrm_map.inputs[1])
-            else:
-                link(nrm_nd.outputs[0], nrm_map.inputs[1])
-
-            link(nrm_map.outputs[0], pr_node.inputs[22])
+                link(nrm_map.outputs[0], pr_node.inputs[22])
     
 #checks if there are textures linked already
 def check_nodes(tree):
