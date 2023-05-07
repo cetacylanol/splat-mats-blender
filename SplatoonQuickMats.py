@@ -2,6 +2,7 @@
 #v1.2
 #Emm textures now used as emission strength rather than emission, works on blender 3.4
 #author: cetacylanol
+from operator import le
 import bpy
 from bpy_extras.io_utils import ImportHelper
 import os
@@ -112,6 +113,9 @@ def set_mat_adv(mat, texs, scene):
             tex_transforms.append(s)
         else:
             shade_nodes.append(s)
+            if not s.s_is_add:
+                tx_to_add.append(s.mix_tex.texture_kind)
+
 
         for t in s.s_textures:
             tx_to_add.append(t.texture_kind)
@@ -124,8 +128,12 @@ def set_mat_adv(mat, texs, scene):
 
     #sort into placement order :)
     tex_transforms.sort(key= lambda tt: tt.s_order)
+
+    #node location vals
+    nloc_x = -850
+    nloc_y = 0
     #do texture transforms!
-    for st in tex_transforms:
+    for i, st in enumerate(tex_transforms):
         trnode = ''
         
         if required_textures_present(st, texs):
@@ -135,37 +143,156 @@ def set_mat_adv(mat, texs, scene):
                 trnode.node_tree = bpy.data.node_groups[st.s_node]
             else:
                 trnode = t_nodes.new(st.s_node)
+            
+            trnode.location = (nloc_x, nloc_y - (i * 300))
 
+            
             #plugging in textures
             for stt in st.s_textures:
                 if(stt.texture_kind in texs and texs[stt.texture_kind] != '0'):
                     link(texs[stt.texture_kind], trnode.inputs[int(stt.s_input)])
             
             #setting output socket as new texture
-            if(st.out_socket == 'sock_default'):
-                texs[st.out_texture_kind] = trnode.outputs[0]
-            else:
-                texs[st.out_texture_kind] = trnode.outputs[int(st.out_socket)]
+            texs[st.out_texture_kind] = trnode.outputs[int(st.out_socket)]
 
 
     shade_nodes.sort(key= lambda tt: tt.s_order)
-    sock_out = None 
+    socks_out = [[]]
+    old_ord = 0
 
-    for snd in shade_nodes:
+    #node location vals
+    nloc_x = -600
+    nloc_y = -200
+    for sn, snd in enumerate(shade_nodes):
         trnode = ''
+        sout = None
         if required_textures_present(snd, texs):
-            #create shader node
+            #create shader node and add to socket list
             if snd.s_node in bpy.data.node_groups:
                 trnode = t_nodes.new('ShaderNodeGroup')
                 trnode.node_tree = bpy.data.node_groups[snd.s_node]
-            else:
-                trnode = t_nodes.new(snd.s_node)
+                sout = trnode.outputs[int(snd.out_socket)]
 
+                trnode.location = (nloc_x, nloc_y + (sn * 300))
+            elif (snd.s_node != 'None'):
+                trnode = t_nodes.new(snd.s_node)
+                sout = trnode.outputs[int(snd.out_socket)]
+
+                trnode.location = (nloc_x, nloc_y + (sn * 300))
+
+            if(snd.s_order != old_ord and len(socks_out[old_ord]) > 0):
+                if snd.s_is_add:
+                    socks_out.append([(sout, snd.s_is_add)])
+                else:
+                    socks_out.append([(sout, snd.s_is_add, snd.mix_tex.texture_kind)])
+            else:
+                if snd.s_is_add:
+                    socks_out[old_ord].append((sout, snd.s_is_add))
+                else:
+                    socks_out[old_ord].append((sout, snd.s_is_add, snd.mix_tex.texture_kind))
+
+            old_ord = snd.s_order
+
+            #link textures to shader inputs
             for sntx in snd.s_textures:
                 link(texs[sntx.texture_kind], trnode.inputs[int(sntx.s_input)])
 
+    shader_sock_tree(mat.node_tree, socks_out, texs, locstart_x=-300, locstart_y=0)
 
-            
+
+#combines initial layers of shaders using their placement values
+def shader_sock_tree(tree, sock_infos, texs, locstart_x = 0, locstart_y = 0):
+    link = tree.links.new
+    nodes = tree.nodes
+    mix_out_socks = []
+    nmixer = None
+    endnode = True
+
+    for s in sock_infos:
+        mix_in_sock = 0
+
+        #combine nodes at the same placement level
+        s2 = 0
+        tmp_socks = []
+        while s2 < len(s):
+            if(len(s) - s2 > 1):
+                endnode = False
+                if s[s2][1]:
+                    nmixer = nodes.new('ShaderNodeAddShader')
+                    mix_in_sock = 1
+                else:
+                    nmixer = nodes.new('ShaderNodeMixShader')
+                    if (texs[s[s2][2]] != '0'):
+                        link(texs[s[s2][2]], nmixer.inputs[0])
+                    mix_in_sock = 2
+
+                #move nmixer
+                nmixer.location = (locstart_x, locstart_y - (s2 * 300))
+
+                #add links between mix nodes
+                if s[s2][0] is not None:
+                    link(s[s2][0], nmixer.inputs[mix_in_sock])
+                if s[s2 +1][0] is not None:
+                    link(s[s2 + 1][0], nmixer.inputs[mix_in_sock - 1])
+
+                #add to list for recursion
+                tmp_socks.append((nmixer.outputs[0], s[s2][1]))
+
+            else:
+                #add to list for recursion
+                if s[s2][0] is not None:
+                    tmp_socks.append(s[s2])    
+            s2+= 2
+
+        if (len(tmp_socks) > 0): 
+            mix_out_socks.append(tmp_socks)
+
+
+    if endnode:
+        end_out_socks = [sinf[0] for sinf in mix_out_socks]
+
+        print('end')
+        shader_sock_tree_finish(tree, end_out_socks, locstart_x=locstart_x + 150, locstart_y=locstart_y)
+    else:
+        print('recursing...')
+        shader_sock_tree(tree, mix_out_socks,texs, locstart_x=locstart_x + 150, locstart_y=locstart_y)
+
+#finish connecting shaders
+def shader_sock_tree_finish(tree, sock_infos, locstart_x = 0, locstart_y = 0):
+    link = tree.links.new
+    nodes = tree.nodes
+         
+    if(len(sock_infos) > 1):
+        mix_in_sock = 0
+        s1 = sock_infos.pop(0)
+        s2 = sock_infos.pop(0)
+
+        if s1[1]:
+            nmixer = nodes.new('ShaderNodeAddShader')
+            mix_in_sock = 1
+        else:
+            nmixer = nodes.new('ShaderNodeMixShader')
+            mix_in_sock = 2
+
+        nmixer.location = (locstart_x, locstart_y)
+        #add links between mix nodes
+        if s1[0] is not None:
+            link(s1[0], nmixer.inputs[mix_in_sock])
+        if s2[0] is not None:
+            link(s2[0], nmixer.inputs[mix_in_sock - 1])
+
+        sock_infos.insert(0, (nmixer.outputs[0], s2[1]))
+
+        shader_sock_tree_finish(tree, sock_infos, locstart_x=locstart_x + 150, locstart_y=locstart_y)
+    else:
+        out_node = nodes.new('ShaderNodeOutputMaterial')
+        out_node.location = (locstart_x, 0)
+
+        if sock_infos[0][0] is not None:
+            link(sock_infos[0][0], out_node.inputs[0])
+        
+        print('tree complete.')
+
 
 
 #checks that all required textures have values in the texture dictionary
@@ -180,6 +307,11 @@ def required_textures_present(ninfo, texs):
             if(ninfo.s_textures[p].texture_kind in texs and texs[ninfo.s_textures[p].texture_kind] == '0'):
                 addit = False
         p += 1
+
+    #check mask texture!
+    if ninfo.mix_tex.s_req:
+        if(ninfo.mix_tex.texture_kind in texs and texs[ninfo.mix_tex.texture_kind] == '0'):
+            addit = False
 
     return addit
 
@@ -204,32 +336,35 @@ def check_nodes(tree):
 #deletes all the nodes in a tree except for material output
 def clean_tree(nodes):
     for n in nodes:
-        if(n.bl_idname != 'ShaderNodeOutputMaterial'):
-           nodes.remove(n)
+        nodes.remove(n)
 
+#adds textures if found
 def init_img_sockets(mat, tex_to_add, texs, blue_fix):
     link = mat.node_tree.links.new
     nodes = mat.node_tree.nodes
+    xloc = -1250
+    yloc = 1000
 
     #setting up starting texture sockets.
-    for tx in tex_to_add:
+    for i, tx in enumerate(tex_to_add):
         if texs[tx] != '0':
             if(tx == 'Alb' or tx == 'Emi' or tx == 'Trm'):
-                tn = add_img_node(nodes, texs[tx])
+                tn = add_img_node(nodes, texs[tx], location=(xloc, yloc - (300 * i)))
             else:
-                tn = add_img_node(nodes, texs[tx], cspace='Non-Color')
+                tn = add_img_node(nodes, texs[tx], location=(xloc, yloc - (300 * i)), cspace='Non-Color')
             texs[tx] = tn.outputs[0]
 
             #setting up normal map node...
             if(tx == 'Nrm'):
                 nrm_map = nodes.new('ShaderNodeNormalMap')
+                nrm_map.location = (xloc + 260, yloc - (300 * i))
                 
                 if(blue_fix):
                     #add 1 to blue channel
                     sep_col = nodes.new('ShaderNodeSeparateColor')
-                    sep_col.location = (-300,-800)
+                    sep_col.location = (xloc + 400, yloc - (300 * i))
                     comb_col = nodes.new('ShaderNodeCombineColor')
-                    comb_col.location = (-250,-800)
+                    comb_col.location = (xloc +500, yloc - (300 * i))
                     comb_col.inputs[2].default_value = 1
 
                     link(tn.outputs[0], sep_col.inputs[0])
@@ -441,16 +576,17 @@ def texture_into_items(self, context):
 def nodegroup_output_items(self, context):
     #get path to this items container
     shnd = self
+    items = []
 
     node_in_vals = []
     if shnd.s_node in context.blend_data.node_groups:
         node_in_vals = [nv.name for nv in context.blend_data.node_groups[shnd.s_node].outputs]
-
-    items = [('sock_default', 'default', 'output socket 0', 0)]
+    else:
+        items = [('0', 'default', 'output socket 0', 0)]
 
     
     for i,niv in enumerate(node_in_vals):
-        items.append((str(i),niv, '',i + 1))
+        items.append((str(i),niv, '',i))
 
     return items
 
@@ -576,8 +712,8 @@ class VIEW3D_PT_Splatoon_Quick_Mats_Advance(bpy.types.Panel):
             pdel.v = i
 
             row = box.row()
+            row.prop(p, 'out_socket')
             if(not p.s_is_shader):
-                row.prop(p, 'out_socket')
                 row.prop(p, 'out_texture_kind', text='as')
             else:
                 if(not p.s_is_add):
